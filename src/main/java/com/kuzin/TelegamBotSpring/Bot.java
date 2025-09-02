@@ -1,5 +1,6 @@
 package com.kuzin.TelegamBotSpring;
 
+import io.github.cdimascio.dotenv.Dotenv;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsumer;
 import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
@@ -15,7 +16,7 @@ public class Bot implements SpringLongPollingBot {
 
     @Override
     public String getBotToken() {
-        return "8158865423:AAGT8K5p6hi9lBiZ5u9VPD9VwDGdMKQ-5mo";
+        return Dotenv.load().get("BOT_TOKEN");
     }
 
     @Override
