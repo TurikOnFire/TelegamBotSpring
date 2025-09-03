@@ -34,20 +34,15 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
 
     private final UserService userService;
     private final ShoppingListService listService;
-
-    private final UserRepository userRepository;
-
     private final Map<Long, Boolean> waitingForList = new HashMap<>();
     private final TelegramClient telegramClient;
 
-    public UpdateConsumer(UserService userService, ShoppingListService listService,
-                          UserRepository userRepository) {
+    public UpdateConsumer(UserService userService, ShoppingListService listService) {
         this.userService = userService;
         this.listService = listService;
         this.telegramClient = new OkHttpTelegramClient(
                 Dotenv.load().get("BOT_TOKEN")
         );
-        this.userRepository = userRepository;
     }
 
     @SneakyThrows
@@ -57,12 +52,12 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
         String firstName = update.getMessage().getChat().getFirstName();
 
         String welcomeText = """
-        👋 Привет, %s! Добро пожаловать в наш бот!
+        👋 Привет, %s!
 
-        Для начала работы воспользуйтесь командой:
-        /start - показать это сообщение
+        Для начала работы воспользуйся командами:
+        Меню - показать меню
+        Картинка - получить случайную картинку
 
-        Или используйте кнопки меню для навигации.
         """.formatted(firstName);
 
         SendMessage message = SendMessage.builder()
@@ -113,31 +108,39 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
     private void createShopList(Message message) {
         Long chatId = message.getChatId();
         Long userId = message.getChat().getId();
-        String text = message.getText();
-
-        text = text.substring(8);
-
-        // Проверяем, ожидаем ли мы список от этого пользователя
-        if (waitingForList.containsKey(chatId) && waitingForList.get(chatId)) {
-            waitingForList.put(chatId, false);
-
-            try {
-                // Создаем и сохраняем список покупок
-                ShoppingList shoppingList = new ShoppingList();
-                shoppingList.setShoppingList(text);
-                shoppingList.setId(chatId);
-                com.kuzin.TelegamBotSpring.entities.User user = new com.kuzin.TelegamBotSpring.entities.User();
-                user.setId(userId);
-                user.setUsername(message.getChat().getUserName());
-                shoppingList.setUser(user);
-
-                listService.createList(shoppingList);
-
-                sendMessage(chatId, "Список покупок успешно сохранен!");
-            }  catch (Exception e) {
-                sendMessage(chatId, "Ошибка при сохранении списка. Попробуйте еще раз.");
-            }
+        Optional<com.kuzin.TelegamBotSpring.entities.User> user = userService.getUserById(userId);
+        if (userService.getUserById(userId).isEmpty()) {
+            user = Optional.of(new com.kuzin.TelegamBotSpring.entities.User());
+            user.get().setUsername(message.getChat().getUserName());
+            user.get().setFirstName(message.getChat().getFirstName());
+            user.get().setId(message.getChat().getId());
+            userService.createUser(user.get());
         }
+
+            String text = message.getText();
+
+            text = text.substring(8);
+
+            // Проверяем, ожидаем ли мы список от этого пользователя
+            if (waitingForList.containsKey(chatId) && waitingForList.get(chatId)) {
+                waitingForList.put(chatId, false);
+
+                try {
+                    // Создаем и сохраняем список покупок
+                    ShoppingList shoppingList = new ShoppingList();
+                    shoppingList.setShoppingList(text);
+                    shoppingList.setId(chatId);
+                    shoppingList.setUser(user.get());
+
+                    listService.createList(shoppingList);
+
+                    sendMessage(chatId, "Список покупок успешно сохранен!");
+                }  catch (Exception e) {
+                    sendMessage(chatId, "Ошибка при сохранении списка. Попробуйте еще раз.");
+                }
+            } else {
+                sendMessage(chatId, "Необходимо сначала нажать пункт меню: \"Создать список покупок\", а затем присылать его.");
+            }
     }
 
     private void sendImage(Long chatId) {
@@ -166,7 +169,7 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
     private void sendReplyKeyboard(Long chatId) {
         SendMessage message = SendMessage.builder()
                 .chatId(chatId.toString())
-                .text("Здравствуйте!")
+                .text("Меню загружено")
                 .build();
 
         List<KeyboardRow> keyboardRows = List.of(
@@ -196,6 +199,13 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
 
     private void checkShoppingList(Long chatId, User tgUser) {
         var user = userService.getUserById(tgUser.getId());
+        if (user.isEmpty()) {
+            user = Optional.of(new com.kuzin.TelegamBotSpring.entities.User());
+            user.get().setUsername(tgUser.getUserName());
+            user.get().setFirstName(tgUser.getFirstName());
+            user.get().setId(tgUser.getId());
+            userService.createUser(user.get());
+        }
         var userId = user.get().getId();
         ShoppingList shoppingList = listService.getListByUserId(userId).isPresent() ?
                 listService.getListByUserId(userId).get() :
@@ -211,7 +221,7 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
         for (String s : shoppingListText) {
             result.append("!!! ").append(s).append("\n");
         }
-        sendMessage(chatId, "Ваш список покупок: \n" + result);
+        sendMessage(chatId, "" + result);
     }
 
     private void handleCreateShoppingList(Long chatId, User tgUser, CallbackQuery callbackQuery) {
