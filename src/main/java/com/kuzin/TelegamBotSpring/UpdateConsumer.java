@@ -1,7 +1,6 @@
 package com.kuzin.TelegamBotSpring;
 
 import com.kuzin.TelegamBotSpring.entities.ShoppingList;
-import com.kuzin.TelegamBotSpring.repositories.UserRepository;
 import com.kuzin.TelegamBotSpring.services.ShoppingListService;
 import com.kuzin.TelegamBotSpring.services.UserService;
 import io.github.cdimascio.dotenv.Dotenv;
@@ -11,10 +10,7 @@ import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
-import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
-import org.telegram.telegrambots.meta.api.objects.InputFile;
-import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.api.objects.User;
+import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
@@ -26,6 +22,8 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.io.IOException;
 import java.net.URL;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -102,7 +100,32 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
         } else if (update.hasCallbackQuery()) {
             handleCallbackQuery(update.getCallbackQuery());
         }
+    }
 
+    private void handleCallbackQuery(CallbackQuery callbackQuery) {
+        var data = callbackQuery.getData();
+        var user = callbackQuery.getFrom();
+        var chatId = callbackQuery.getFrom().getId();
+        switch (data) {
+            case "my_name" -> sendMyName(chatId, user);
+            case "random" -> sendRandom(chatId);
+            case "create_shopping_list" -> handleCreateShoppingList(chatId, callbackQuery);
+            case "check_shopping_list" -> checkShoppingList(chatId, user);
+            default -> sendMessage(chatId, "Неизвестная команда.");
+        }
+    }
+
+    private void sendMyName(Long chatId, User user) {
+        var text = "Привет!\n\n \uD83D\uDE09 Вас зовут: %s\n ☠\uFE0F Ваш ник: @%s".formatted(
+                user.getFirstName() + " " + (user.getLastName() == null ? "" : user.getLastName()),
+                user.getUserName()
+        );
+        sendMessage(chatId, text);
+    }
+
+    private void sendRandom(Long chatId) {
+        var randomInt = Math.abs(ThreadLocalRandom.current().nextInt());
+        sendMessage(chatId, "\uD83C\uDFB2 Ваше рандомное число: " + randomInt);
     }
 
     private void createShopList(Message message) {
@@ -117,83 +140,50 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
             userService.createUser(user.get());
         }
 
-            String text = message.getText();
+        String text = message.getText();
 
-            text = text.substring(8);
+        text = text.substring(8);
 
-            // Проверяем, ожидаем ли мы список от этого пользователя
-            if (waitingForList.containsKey(chatId) && waitingForList.get(chatId)) {
-                waitingForList.put(chatId, false);
+        if (waitingForList.containsKey(chatId) && waitingForList.get(chatId)) {
+            waitingForList.put(chatId, false);
 
-                try {
-                    // Создаем и сохраняем список покупок
-                    ShoppingList shoppingList = new ShoppingList();
-                    shoppingList.setShoppingList(text);
-                    shoppingList.setId(chatId);
-                    shoppingList.setUser(user.get());
-
-                    listService.createList(shoppingList);
-
-                    sendMessage(chatId, "Список покупок успешно сохранен!");
-                }  catch (Exception e) {
-                    sendMessage(chatId, "Ошибка при сохранении списка. Попробуйте еще раз.");
-                }
-            } else {
-                sendMessage(chatId, "Необходимо сначала нажать пункт меню: \"Создать список покупок\", а затем присылать его.");
-            }
-    }
-
-    private void sendImage(Long chatId) {
-        sendMessage(chatId, "Запустили загрузку картинки");
-        new Thread(() -> {
-            var imageUrl = "https://picsum.photos/200";
             try {
-                URL url = new URL(imageUrl);
-                var inputStream = url.openStream();
+                ShoppingList shoppingList = new ShoppingList();
+                shoppingList.setShoppingList(text);
+                shoppingList.setId(chatId);
+                shoppingList.setUser(user.get());
 
-                SendPhoto sendPhoto = SendPhoto.builder()
-                        .chatId(chatId)
-                        .photo(new InputFile(inputStream, "random.jpg"))
-                        .caption("Ваша случайная картинка:")
-                        .build();
+                listService.createList(shoppingList);
 
-                telegramClient.execute(sendPhoto);
+                sendMessage(chatId, "Список покупок успешно сохранен!");
 
-            } catch (TelegramApiException | IOException e) {
-                throw new RuntimeException(e);
+                StringBuilder offerBuilder = new StringBuilder();
+                for (String s: shoppingList.getShoppingList().split(",")) {
+                    if (s.contains("чай")) offerBuilder.append(",сахар");
+                    if (s.contains("хлеб")) offerBuilder.append(",колбаса,сыр");
+                    if (s.contains("булка")) offerBuilder.append(",колбаса,сыр");
+                    if (s.contains("кофе")) offerBuilder.append(",молоко");
+                }
+                String offer = offerBuilder.toString();
+                if (!offer.isEmpty()) {
+                    sendMessage(chatId, "Возможно вы хотели бы дополнить список покупок следующими продуктами: \n" + offer);
+                }
+
+            }  catch (Exception e) {
+                sendMessage(chatId, "Ошибка при сохранении списка. Попробуйте еще раз.");
             }
-        }).start();
+        } else {
+            sendMessage(chatId, "ℹ\uFE0F Необходимо сначала нажать пункт меню: \"Создать список покупок\", а затем присылать его.");
+        }
     }
 
-    @SneakyThrows
-    private void sendReplyKeyboard(Long chatId) {
-        SendMessage message = SendMessage.builder()
-                .chatId(chatId.toString())
-                .text("Меню загружено")
-                .build();
+    private void handleCreateShoppingList(Long chatId, CallbackQuery callbackQuery) {
+        String callbackData = callbackQuery.getData();
 
-        List<KeyboardRow> keyboardRows = List.of(
-                new KeyboardRow("Меню", "Картинка")
-        );
+        if ("create_shopping_list".equals(callbackData)) {
+            waitingForList.put(chatId, true);
 
-        ReplyKeyboardMarkup markup = new ReplyKeyboardMarkup(keyboardRows);
-        markup.setResizeKeyboard(true);
-        markup.setOneTimeKeyboard(false);
-        message.setReplyMarkup(markup);
-
-        telegramClient.execute(message);
-    }
-
-    private void handleCallbackQuery(CallbackQuery callbackQuery) {
-        var data = callbackQuery.getData();
-        var user = callbackQuery.getFrom();
-        var chatId = callbackQuery.getFrom().getId();
-        switch (data) {
-            case "my_name" -> sendMyName(chatId, user);
-            case "random" -> sendRandom(chatId);
-            case "create_shopping_list" -> handleCreateShoppingList(chatId, user, callbackQuery);
-            case "check_shopping_list" -> checkShoppingList(chatId, user);
-            default -> sendMessage(chatId, "Неизвестная команда.");
+            sendMessage(chatId, "Напиши список покупок в формате: \"Список: продукт,продукт,продукт\".\nБот чувствителен к регистру!");
         }
     }
 
@@ -217,24 +207,39 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
         List<String> shoppingListText = !shoppingList.getShoppingList().isEmpty() ?
                 Arrays.stream(shoppingList.getShoppingList().split(",")).toList() :
                 Collections.emptyList();
-        StringBuilder result = new StringBuilder("Ваш список покупок: \n");
+        StringBuilder result = new StringBuilder("\uD83D\uDCB0 Ваш список покупок: \n");
         for (String s : shoppingListText) {
-            result.append("!!! ").append(s).append("\n");
+            result.append("✅ ").append(s).append("\n");
         }
         sendMessage(chatId, "" + result);
-    }
-
-    private void handleCreateShoppingList(Long chatId, User tgUser, CallbackQuery callbackQuery) {
-        String callbackData = callbackQuery.getData();
-
-        // Проверяем, что callback связан с созданием списка покупок
-        if ("create_shopping_list".equals(callbackData)) {
-            waitingForList.put(chatId, true);
-
-            sendMessage(chatId, "Напиши список покупок в формате: \"Список: продукт,продукт,продукт\".\nБот чувствителен к регистру!");
+        LocalDate today = LocalDate.now();
+        DayOfWeek dayOfWeek = today.getDayOfWeek();
+        if (dayOfWeek.name().equals("MONDAY")){
+            sendMessage(chatId, "Сегодня понедельник, составьте новый список покупок!");
         }
     }
 
+    private void sendImage(Long chatId) {
+        sendMessage(chatId, "Запустили загрузку картинки");
+        new Thread(() -> {
+            var imageUrl = "https://picsum.photos/200";
+            try {
+                URL url = new URL(imageUrl);
+                var inputStream = url.openStream();
+
+                SendPhoto sendPhoto = SendPhoto.builder()
+                        .chatId(chatId)
+                        .photo(new InputFile(inputStream, "random.jpg"))
+                        .caption("\uD83C\uDFB2 Ваша случайная картинка:")
+                        .build();
+
+                telegramClient.execute(sendPhoto);
+
+            } catch (TelegramApiException | IOException e) {
+                throw new RuntimeException(e);
+            }
+        }).start();
+    }
 
     @SneakyThrows
     private void sendMessage(Long chatId, String messageText
@@ -247,23 +252,10 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
         telegramClient.execute(message);
     }
 
-    private void sendMyName(Long chatId, User user) {
-        var text = "Привет!\n\nВас зовут: %s\nВаш ник: @%s".formatted(
-                user.getFirstName() + " " + (user.getLastName() == null ? "" : user.getLastName()),
-                user.getUserName()
-        );
-        sendMessage(chatId, text);
-    }
-
-    private void sendRandom(Long chatId) {
-        var randomInt = Math.abs(ThreadLocalRandom.current().nextInt());
-        sendMessage(chatId, "Ваше рандомное число: " + randomInt);
-    }
-
     @SneakyThrows
     private void sendMainMenu(Long chatId) {
         SendMessage message = SendMessage.builder()
-                .text("Привет, выбери пункт меню: ")
+                .text("\uD83D\uDCCB Привет, выбери пункт меню: ")
                 .chatId(chatId)
                 .build();
 
@@ -296,6 +288,25 @@ public class UpdateConsumer implements LongPollingSingleThreadUpdateConsumer {
 
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup(keyboardRows);
 
+        message.setReplyMarkup(markup);
+
+        telegramClient.execute(message);
+    }
+
+    @SneakyThrows
+    private void sendReplyKeyboard(Long chatId) {
+        SendMessage message = SendMessage.builder()
+                .chatId(chatId.toString())
+                .text("Меню загружено")
+                .build();
+
+        List<KeyboardRow> keyboardRows = List.of(
+                new KeyboardRow("Меню", "Картинка")
+        );
+
+        ReplyKeyboardMarkup markup = new ReplyKeyboardMarkup(keyboardRows);
+        markup.setResizeKeyboard(true);
+        markup.setOneTimeKeyboard(false);
         message.setReplyMarkup(markup);
 
         telegramClient.execute(message);
